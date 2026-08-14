@@ -23,7 +23,10 @@
 #   6. Writes steam_appid.txt (215).
 #   7. Normalizes cfg/valve.rc and creates cfg/autoexec.cfg.
 #   8. Copies hl2/materials/Debug/debugempty.* to the lowercase path Linux needs.
-#   9. Installs libmemfix_i486.so and preloads it from srcds_run, fixing the
+#   9. Forces srcds_run to use the SSE2 i686 binary on AMD hosts. The old
+#      srcds_amd cvar registry is incompatible with MetaMod/SourceMod and
+#      crashes when SourceMod registers its first convar.
+#  10. Installs libmemfix_i486.so and preloads it from srcds_run, fixing the
 #      CPU/glibc memcpy corruption that mangles command lines and config files.
 
 set -u
@@ -147,7 +150,7 @@ fi
 # -------------------------------------------------------------- executables
 chmod +x srcds_amd srcds_i486 srcds_i686 srcds_run 2>/dev/null || true
 chmod +x bin/*.so 2>/dev/null || true
-say "[1/9] binaries are executable"
+say "[1/10] binaries are executable"
 
 # ------------------------------------------------- plugin (sdk06-steam2less)
 mkdir -p insurgency/addons
@@ -159,7 +162,7 @@ cat > insurgency/addons/fixes.vdf <<'EOF'
 	"file"	"insurgency/addons/libfixes_i486.so"
 }
 EOF
-say "[2/9] sdk06-steam2less plugin installed (insurgency/addons/libfixes_i486.so)"
+say "[2/10] sdk06-steam2less plugin installed (insurgency/addons/libfixes_i486.so)"
 
 # --------------------------------------- patch Steam2 encryption key getter
 if ! have python3; then
@@ -198,7 +201,7 @@ if [ ! -f bin/libsteamvalidateuseridtickets_i486.so.orig ]; then
     cp -p bin/libsteamvalidateuseridtickets_i486.so bin/libsteamvalidateuseridtickets_i486.so.orig
 fi
 ln -sfn libsteamvalidateuseridtickets_i486.so bin/libsteamvalidateuseridtickets.so
-say "[3/9] Steam2 encryption-key getter patched (backup kept)"
+say "[3/10] Steam2 encryption-key getter patched (backup kept)"
 
 # --------------------------------------------------------- modern Steam libs
 mkdir -p bin/.prepatch
@@ -215,11 +218,11 @@ cp -f "$STEAMCLIENT" bin/steamclient_i486.so
 cp -f "$TIER0"        bin/libtier0_s.so
 cp -f "$VSTDLIB"      bin/libvstdlib_s.so
 chmod +x bin/steamclient_i486.so bin/libtier0_s.so bin/libvstdlib_s.so
-say "[4/9] modern Steam client libs installed (old copies in bin/.prepatch)"
+say "[4/10] modern Steam client libs installed (old copies in bin/.prepatch)"
 
 # ------------------------------------------------------------------ appid
 printf '215' > steam_appid.txt
-say "[5/9] steam_appid.txt = 215"
+say "[5/10] steam_appid.txt = 215"
 
 # ---------------------------------------------------------- cfg/valve.rc
 mkdir -p insurgency/cfg
@@ -230,17 +233,40 @@ EOF
 if [ ! -f insurgency/cfg/autoexec.cfg ]; then
     printf '// user autoexec\n' > insurgency/cfg/autoexec.cfg
 fi
-say "[6/9] cfg/valve.rc + cfg/autoexec.cfg normalized"
+say "[6/10] cfg/valve.rc + cfg/autoexec.cfg normalized"
 
 # ------------------------------------------------- debugempty material
 if [ -f hl2/materials/Debug/debugempty.vmt ] && [ -f hl2/materials/Debug/debugempty.vtf ]; then
     mkdir -p hl2/materials/debug
     cp -f hl2/materials/Debug/debugempty.vmt hl2/materials/debug/debugempty.vmt
     cp -f hl2/materials/Debug/debugempty.vtf hl2/materials/debug/debugempty.vtf
-    say "[7/9] hl2/materials/debug/debugempty.* installed"
+    say "[7/10] hl2/materials/debug/debugempty.* installed"
 else
-    say "[7/9] WARN: hl2/materials/Debug/debugempty.* not found, skipping"
+    say "[7/10] WARN: hl2/materials/Debug/debugempty.* not found, skipping"
 fi
+
+# ------------------------------------------------------- AMD binary/cvar fix
+# srcds_amd uses a different cvar registry than the shared vstdlib_i486.so,
+# so MetaMod/SourceMod crash while registering convars (observed on AMD
+# Ryzen hosts). Always launch the SSE2 i686 build instead.
+python3 - srcds_run <<'PY'
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8", errors="surrogateescape") as f:
+    text = f.read()
+
+old = "HL=./srcds_amd"
+new = "HL=./srcds_i686"
+count = text.count(old)
+if count:
+    with open(path, "w", encoding="utf-8", errors="surrogateescape") as f:
+        f.write(text.replace(old, new))
+    print(f"srcds_run: replaced {count} srcds_amd reference(s) with srcds_i686")
+else:
+    print("srcds_run already uses srcds_i686")
+PY
+say "[8/10] srcds_run AMD branches switched to srcds_i686"
 
 # ------------------------------------------------------ CPU/memcpy fix
 # Only apply on Intel CPUs that exhibit the glibc memcpy corruption
@@ -289,13 +315,13 @@ if changed:
 else:
     print("srcds_run already has LD_PRELOAD")
 PY
-    say "[8/9] memcpy fix installed (bin/libmemfix_i486.so + srcds_run LD_PRELOAD)"
+    say "[9/10] memcpy fix installed (bin/libmemfix_i486.so + srcds_run LD_PRELOAD)"
 else
-    say "[8/9] memcpy fix skipped (host CPU: ${CPU_VENDOR:-unknown} - not affected)"
+    say "[9/10] memcpy fix skipped (host CPU: ${CPU_VENDOR:-unknown} - not affected)"
 fi
 
 # -------------------------------------------------------------- summary
-say "[9/9] patch complete for $SERVER_DIR"
+say "[10/10] patch complete for $SERVER_DIR"
 say
 say "Launch it yourself, e.g.:"
 say "  $SERVER_DIR/srcds_run -game insurgency -norestart +map ins_almaden +maxplayers 16 +sv_lan 0 +sv_master_legacy_mode 0"
